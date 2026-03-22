@@ -3,13 +3,6 @@
   "style": "radix-maia",
   "rsc": true,
   "tsx": true,
-  "tailwind": {
-    "config": "",
-    "css": "app/globals.css",
-    "baseColor": "neutral",
-    "cssVariables": true,
-    "prefix": ""
-  },
   "aliases": {
     "components": "@/components",
     "utils": "@/lib/utils",
