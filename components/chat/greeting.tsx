@@ -1,6 +1,9 @@
 import { motion } from "framer-motion";
+import { getRestaurantName } from "@/lib/restaurant";
 
 export const Greeting = () => {
+  const name = getRestaurantName();
+
   return (
     <div className="flex flex-col items-center px-4" key="overview">
       <motion.div
@@ -9,7 +12,7 @@ export const Greeting = () => {
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.35, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       >
-        What can I help with?
+        Welcome to {name}, how may I assist?
       </motion.div>
       <motion.div
         animate={{ opacity: 1, y: 0 }}
@@ -17,7 +20,7 @@ export const Greeting = () => {
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.5, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       >
-        Ask a question, write code, or explore ideas.
+        Create a booking, update a booking, or cancel a booking.
       </motion.div>
     </div>
   );

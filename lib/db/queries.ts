@@ -23,6 +23,7 @@ import {
   chat,
   type DBMessage,
   document,
+  guests,
   message,
   type Suggestion,
   stream,
@@ -35,6 +36,8 @@ import { generateHashedPassword } from "./utils";
 
 const client = postgres(process.env.POSTGRES_URL ?? "");
 const db = drizzle(client);
+
+export { db };
 
 export async function getUser(email: string): Promise<User[]> {
   try {
@@ -86,12 +89,15 @@ export async function saveChat({
   visibility: VisibilityType;
 }) {
   try {
-    return await db.insert(chat).values({
-      id,
-      createdAt: new Date(),
-      userId,
-      title,
-      visibility,
+    await db.transaction(async (tx) => {
+      await tx.insert(chat).values({
+        id,
+        createdAt: new Date(),
+        userId,
+        title,
+        visibility,
+      });
+      await tx.insert(guests).values({ id });
     });
   } catch (_error) {
     throw new ChatbotError("bad_request:database", "Failed to save chat");

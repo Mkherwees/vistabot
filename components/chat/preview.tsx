@@ -2,10 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { suggestions } from "@/lib/constants";
+import { getRestaurantName } from "@/lib/restaurant";
 import { SparklesIcon } from "./icons";
 
 export function Preview() {
   const router = useRouter();
+  const restaurantName = getRestaurantName();
 
   const handleAction = (query?: string) => {
     const url = query ? `/?query=${encodeURIComponent(query)}` : "/";
@@ -24,10 +26,10 @@ export function Preview() {
       <div className="flex flex-1 flex-col items-center justify-center gap-8 px-8">
         <div className="text-center">
           <h2 className="text-xl font-semibold tracking-tight">
-            What can I help with?
+            Welcome to {restaurantName}, how may I assist?
           </h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            Ask a question, write code, or explore ideas.
+            Create a booking, update a booking, or cancel a booking.
           </p>
         </div>
 

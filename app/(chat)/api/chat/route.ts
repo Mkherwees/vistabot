@@ -20,11 +20,8 @@ import {
 } from "@/lib/ai/models";
 import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
-import { createDocument } from "@/lib/ai/tools/create-document";
-import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
-import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
-import { updateDocument } from "@/lib/ai/tools/update-document";
+import { createRestaurantTools } from "@/lib/ai/tools/restaurant";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
   createStreamId,
@@ -187,24 +184,29 @@ export async function POST(request: Request) {
     const supportsTools = capabilities?.tools === true;
 
     const modelMessages = await convertToModelMessages(uiMessages);
+    const restaurantTools = createRestaurantTools({ chatId: id });
 
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const result = streamText({
           model: getLanguageModel(chatModel),
-          system: systemPrompt({ requestHints, supportsTools }),
+          system: systemPrompt({
+            requestHints,
+            supportsTools,
+            includeArtifactTools: false,
+          }),
           messages: modelMessages,
-          stopWhen: stepCountIs(5),
+          stopWhen: stepCountIs(10),
           experimental_activeTools:
             isReasoningModel && !supportsTools
               ? []
               : [
                   "getWeather",
-                  "createDocument",
-                  "editDocument",
-                  "updateDocument",
-                  "requestSuggestions",
+                  "createBooking",
+                  "updateReservation",
+                  "addGuestNote",
+                  "cancelReservation",
                 ],
           providerOptions: {
             ...(modelConfig?.gatewayOrder && {
@@ -216,22 +218,7 @@ export async function POST(request: Request) {
           },
           tools: {
             getWeather,
-            createDocument: createDocument({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-            editDocument: editDocument({ dataStream, session }),
-            updateDocument: updateDocument({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
+            ...restaurantTools,
           },
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,
