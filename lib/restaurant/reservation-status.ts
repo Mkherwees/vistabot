@@ -59,3 +59,19 @@ export function isActiveGuestReservation(
 export function isPendingBlockedStatus(status: string | null | undefined): boolean {
   return Boolean(status?.startsWith(RESERVATION_BLOCKED_PREFIX));
 }
+
+/** Short label for chat/API: `confirmed`, `pending_confirmation`, or raw when unknown. */
+export function getGuestFacingReservationStatus(
+  status: string | null | undefined
+): string {
+  if (!status || status === "cancelled") {
+    return "unknown";
+  }
+  if (status === "confirmed") {
+    return "confirmed";
+  }
+  if (status.startsWith(RESERVATION_BLOCKED_PREFIX)) {
+    return "pending_confirmation";
+  }
+  return status;
+}

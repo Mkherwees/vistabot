@@ -203,6 +203,8 @@ export async function POST(request: Request) {
               ? []
               : [
                   "getWeather",
+                  "listMyReservations",
+                  "listAvailableSlots",
                   "createBooking",
                   "confirmReservation",
                   "updateReservation",

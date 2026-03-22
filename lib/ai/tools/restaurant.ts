@@ -5,11 +5,58 @@ import {
   handleCancelReservation,
   handleConfirmReservation,
   handleCreateBooking,
+  handleListAvailableSlots,
+  handleListGuestReservations,
   handleUpdateReservation,
 } from "@/lib/restaurant/handlers";
 
 export function createRestaurantTools(context: { chatId: string }) {
   const { chatId } = context;
+
+  const listMyReservations = tool({
+    description:
+      "Lists this guest's upcoming reservations (and any active hold pending confirmation) for this chat: reservation id, date, time, party size, and status (confirmed vs pending_confirmation). Call when the guest asks what they have booked or wants to see their reservations.",
+    inputSchema: z.object({}),
+    execute: async () =>
+      handleListGuestReservations({
+        chatId,
+        operation: "listGuestReservations",
+      }),
+  });
+
+  const listAvailableSlots = tool({
+    description:
+      "Returns bookable start times (HH:mm) for a given calendar date and party size, based on opening hours and current reservations. Call when the guest needs time options or before suggesting times — avoids trial-and-error. Requires a concrete date (or phrase the server can resolve).",
+    inputSchema: z.object({
+      date: z
+        .string()
+        .describe(
+          "Calendar day (YYYY-MM-DD preferred) or phrase like 'this Friday' resolved in the restaurant timezone"
+        ),
+      partySize: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Head count; defaults to 2 if omitted"),
+      timezone: z
+        .string()
+        .optional()
+        .describe("IANA timezone for interpreting the date phrase"),
+      seatingPreference: z
+        .string()
+        .optional()
+        .describe(
+          "Optional area (e.g. window) — same as createBooking seating preference"
+        ),
+    }),
+    execute: async (input) =>
+      handleListAvailableSlots({
+        chatId,
+        operation: "listAvailableSlots",
+        ...input,
+      }),
+  });
 
   const createBooking = tool({
     description:
@@ -162,6 +209,8 @@ export function createRestaurantTools(context: { chatId: string }) {
   });
 
   return {
+    listMyReservations,
+    listAvailableSlots,
     createBooking,
     confirmReservation,
     updateReservation,

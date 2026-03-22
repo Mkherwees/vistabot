@@ -30,7 +30,7 @@ export function isIsoDateOnly(s: string): boolean {
 }
 
 /** Calendar weekday 0=Sun … 6=Sat for a YYYY-MM-DD (UTC noon anchor). */
-function isoDayOfWeek(iso: string): number {
+export function getIsoCalendarWeekday(iso: string): number {
   const [y, m, d] = iso.split("-").map((x) => Number.parseInt(x, 10));
   const utc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   return utc.getUTCDay();
@@ -79,7 +79,7 @@ export function tryParseWeekdayPhraseToIso(
   }
 
   const todayIso = getTodayIsoInTimeZone(timeZone);
-  const todayDow = isoDayOfWeek(todayIso);
+  const todayDow = getIsoCalendarWeekday(todayIso);
   const hasNext = /\bnext\b/.test(lower);
   let diff = (targetDow - todayDow + 7) % 7;
   if (hasNext && diff === 0) {

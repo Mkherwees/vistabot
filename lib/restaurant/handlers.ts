@@ -4,7 +4,10 @@ import {
   cancelReservationInDb,
   confirmReservationInDb,
   createBookingInDb,
+  getAvailableReservationSlotsForDate,
+  listGuestReservationsForChat,
   updateReservationInDb,
+  type GuestReservationListItem,
 } from "@/lib/db/restaurant-queries";
 import { getRestaurantTimeZone } from "@/lib/restaurant";
 import { getBlockedExpiryMillis } from "@/lib/restaurant/reservation-status";
@@ -22,6 +25,11 @@ export type RestaurantHandlerResult = {
   message: string;
   display?: string;
   reservationId?: number;
+  /** HH:mm strings from listAvailableSlots */
+  availableTimes?: string[];
+  maxPartySize?: number;
+  date?: string;
+  reservations?: GuestReservationListItem[];
 };
 
 function enrichCreateBookingPayload(
@@ -252,6 +260,120 @@ export async function handleCreateBooking(
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not create reservation.";
+    return { ok: false, message: msg };
+  }
+}
+
+export async function handleListGuestReservations(
+  payload: Record<string, unknown>
+): Promise<RestaurantHandlerResult> {
+  logRestaurantEndpoint("listGuestReservations", payload);
+
+  const chatId = String(payload.chatId ?? "");
+  if (!chatId) {
+    return { ok: false, message: "Missing conversation id." };
+  }
+
+  try {
+    const items = await listGuestReservationsForChat(chatId);
+    if (items.length === 0) {
+      return {
+        ok: true,
+        message:
+          "No upcoming reservations on file for this guest in this chat.",
+        reservations: [],
+      };
+    }
+
+    const summary = items
+      .map(
+        (r) =>
+          `#${r.id} ${r.date} ${r.time} — ${r.partySize} guest(s) — ${r.status}`
+      )
+      .join("; ");
+
+    return {
+      ok: true,
+      message: `Found ${items.length} reservation(s): ${summary}`,
+      reservations: items,
+    };
+  } catch (e) {
+    const msg =
+      e instanceof Error ? e.message : "Could not list reservations.";
+    return { ok: false, message: msg };
+  }
+}
+
+export async function handleListAvailableSlots(
+  payload: Record<string, unknown>
+): Promise<RestaurantHandlerResult> {
+  logRestaurantEndpoint("listAvailableSlots", payload);
+
+  const timezone = resolveTimezone(
+    typeof payload.timezone === "string" ? payload.timezone : undefined
+  );
+  const rawDate = typeof payload.date === "string" ? payload.date.trim() : "";
+  if (!rawDate) {
+    return {
+      ok: false,
+      message:
+        "Pass a date (e.g. YYYY-MM-DD or 'this Friday') to list open reservation times.",
+    };
+  }
+
+  const normalized = normalizeReservationDate(rawDate, timezone);
+  if (!isIsoDateOnly(normalized)) {
+    return {
+      ok: false,
+      message:
+        "Could not resolve the date to YYYY-MM-DD in the restaurant timezone. Ask for a definite day.",
+    };
+  }
+
+  const partyRaw = payload.partySize;
+  let partySize = 2;
+  if (typeof partyRaw === "number" && Number.isFinite(partyRaw)) {
+    partySize = Math.floor(partyRaw);
+  } else if (typeof partyRaw === "string" && partyRaw.trim()) {
+    const n = Number.parseInt(partyRaw, 10);
+    if (Number.isFinite(n)) {
+      partySize = n;
+    }
+  }
+
+  const seatingPreference =
+    typeof payload.seatingPreference === "string"
+      ? payload.seatingPreference
+      : undefined;
+
+  try {
+    const result = await getAvailableReservationSlotsForDate({
+      date: normalized,
+      partySize,
+      seatingPreference,
+    });
+    if (!result.ok) {
+      return { ok: false, message: result.message };
+    }
+
+    const slotLabel =
+      result.availableTimes.length === 0
+        ? "No open slots remain for that day (or we are closed that day)."
+        : `Open slots (HH:mm): ${result.availableTimes.join(", ")}`;
+
+    return {
+      ok: true,
+      message: [
+        `Date ${result.date}, party of ${partySize}: ${slotLabel}`,
+        `Largest table seats ${result.maxPartySize}.`,
+      ].join(" "),
+      date: result.date,
+      availableTimes: result.availableTimes,
+      maxPartySize: result.maxPartySize,
+    };
+  } catch (e) {
+    const msg =
+      e instanceof Error ? e.message : "Could not list available slots.";
     return { ok: false, message: msg };
   }
 }

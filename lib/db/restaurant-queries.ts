@@ -3,8 +3,15 @@ import "server-only";
 import { and, asc, desc, eq, gte, ne } from "drizzle-orm";
 import { chat, guests, reservations, restaurantTables } from "@/lib/db/schema";
 import { db } from "@/lib/db/queries";
+import { getRestaurantTimeZone } from "@/lib/restaurant";
+import {
+  assertReservationSlotAllowed,
+  isReservationSlotInThePast,
+  listCandidateSlotTimesForDate,
+} from "@/lib/restaurant/open-hours";
 import {
   buildBlockedStatus,
+  getGuestFacingReservationStatus,
   isActiveGuestReservation,
   isPendingBlockedStatus,
   reservationBlocksSlot,
@@ -37,12 +44,12 @@ async function ensureGuestForChatId(chatId: string): Promise<void> {
   }
 }
 
-async function pickFreeTableId(
+async function findFreeTableIdForSlot(
   partySize: number,
   seatingPreference: string | undefined,
   date: string,
   time: string
-): Promise<number> {
+): Promise<number | null> {
   const candidates = await db
     .select()
     .from(restaurantTables)
@@ -50,7 +57,7 @@ async function pickFreeTableId(
     .orderBy(asc(restaurantTables.capacity));
 
   if (candidates.length === 0) {
-    throw new Error("No table is large enough for your party size.");
+    return null;
   }
 
   const pref = seatingPreference?.trim().toLowerCase();
@@ -84,7 +91,168 @@ async function pickFreeTableId(
     }
   }
 
+  return null;
+}
+
+async function pickFreeTableId(
+  partySize: number,
+  seatingPreference: string | undefined,
+  date: string,
+  time: string
+): Promise<number> {
+  const id = await findFreeTableIdForSlot(
+    partySize,
+    seatingPreference,
+    date,
+    time
+  );
+  if (id !== null) {
+    return id;
+  }
+
+  const [anyFit] = await db
+    .select({ id: restaurantTables.id })
+    .from(restaurantTables)
+    .where(gte(restaurantTables.capacity, partySize))
+    .limit(1);
+
+  if (!anyFit) {
+    throw new Error("No table is large enough for your party size.");
+  }
+
   throw new Error("No table is available at that date and time.");
+}
+
+export type AvailableReservationSlotsResult =
+  | {
+      ok: true;
+      date: string;
+      availableTimes: string[];
+      maxPartySize: number;
+    }
+  | { ok: false; message: string };
+
+export async function getAvailableReservationSlotsForDate({
+  date,
+  partySize,
+  seatingPreference,
+}: {
+  date: string;
+  partySize: number;
+  seatingPreference?: string;
+}): Promise<AvailableReservationSlotsResult> {
+  if (!Number.isFinite(partySize) || partySize < 1) {
+    return { ok: false, message: "Invalid party size." };
+  }
+
+  const allTables = await db.select().from(restaurantTables);
+  const capacities = allTables
+    .map((t) => t.capacity ?? 0)
+    .filter((c) => c > 0);
+  const maxPartySize =
+    capacities.length === 0 ? 0 : Math.max(...capacities);
+
+  if (maxPartySize === 0) {
+    return {
+      ok: false,
+      message: "No tables are configured for this restaurant.",
+    };
+  }
+
+  if (partySize > maxPartySize) {
+    return {
+      ok: false,
+      message: `Party size ${partySize} exceeds our largest table (${maxPartySize}).`,
+    };
+  }
+
+  const tz = getRestaurantTimeZone();
+  const candidates = listCandidateSlotTimesForDate(date);
+  if (candidates.length === 0) {
+    return {
+      ok: true,
+      date,
+      availableTimes: [],
+      maxPartySize,
+    };
+  }
+
+  const availableTimes: string[] = [];
+  for (const time of candidates) {
+    if (isReservationSlotInThePast(date, time, tz)) {
+      continue;
+    }
+    const tableId = await findFreeTableIdForSlot(
+      partySize,
+      seatingPreference,
+      date,
+      time
+    );
+    if (tableId !== null) {
+      availableTimes.push(time);
+    }
+  }
+
+  return {
+    ok: true,
+    date,
+    availableTimes,
+    maxPartySize,
+  };
+}
+
+export type GuestReservationListItem = {
+  id: number;
+  date: string;
+  time: string;
+  partySize: number;
+  /** e.g. confirmed, pending_confirmation */
+  status: string;
+};
+
+/**
+ * Upcoming (or still-active pending) reservations for this guest: not cancelled,
+ * still active, excludes past confirmed visits.
+ */
+export async function listGuestReservationsForChat(
+  chatId: string
+): Promise<GuestReservationListItem[]> {
+  const nowMs = Date.now();
+  const tz = getRestaurantTimeZone();
+  const rows = await db
+    .select()
+    .from(reservations)
+    .where(
+      and(
+        eq(reservations.guest_id, chatId),
+        ne(reservations.status, "cancelled")
+      )
+    )
+    .orderBy(asc(reservations.date), asc(reservations.time));
+
+  const out: GuestReservationListItem[] = [];
+  for (const row of rows) {
+    if (!isActiveGuestReservation(row.status, nowMs)) {
+      continue;
+    }
+    const date = row.date ?? "";
+    const time = row.time ?? "";
+    if (
+      row.status === "confirmed" &&
+      isReservationSlotInThePast(date, time, tz)
+    ) {
+      continue;
+    }
+    const partySize = row.party_size ?? 0;
+    out.push({
+      id: row.id,
+      date,
+      time,
+      partySize,
+      status: getGuestFacingReservationStatus(row.status),
+    });
+  }
+  return out;
 }
 
 export async function findReservationForGuest({
@@ -249,6 +417,8 @@ export async function createBookingInDb({
     guestNotes,
   });
 
+  assertReservationSlotAllowed(date, time, getRestaurantTimeZone());
+
   const tableId = await pickFreeTableId(
     partySize,
     seatingPreference,
@@ -311,6 +481,14 @@ export async function updateReservationInDb({
   const nd = newDate ?? row.date ?? "";
   const nt = newTime ?? row.time ?? "";
   const np = newPartySize ?? row.party_size ?? 1;
+
+  const slotTouched =
+    newDate !== undefined ||
+    newTime !== undefined ||
+    newPartySize !== undefined;
+  if (slotTouched) {
+    assertReservationSlotAllowed(nd, nt, getRestaurantTimeZone());
+  }
 
   const [currentTable] = await db
     .select()
