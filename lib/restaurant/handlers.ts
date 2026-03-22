@@ -2,9 +2,13 @@ import { logRestaurantEndpoint } from "@/lib/restaurant-api-log";
 import {
   appendGuestNoteInDb,
   cancelReservationInDb,
+  confirmReservationInDb,
   createBookingInDb,
   updateReservationInDb,
 } from "@/lib/db/restaurant-queries";
+import { getRestaurantTimeZone } from "@/lib/restaurant";
+import { getBlockedExpiryMillis } from "@/lib/restaurant/reservation-status";
+import { parseGuestNameFromString } from "@/lib/restaurant/guest-name";
 import {
   isIsoDateOnly,
   normalizeBookingSlot,
@@ -107,6 +111,23 @@ function enrichUpdateReservationPayload(
   return next;
 }
 
+function formatHoldDeadlineLocal(status: string | null | undefined): string {
+  const ms = status ? getBlockedExpiryMillis(status) : null;
+  if (ms === null) {
+    return "within the next few minutes";
+  }
+  const tz = getRestaurantTimeZone();
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: tz,
+    }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toISOString();
+  }
+}
+
 function enrichCancelPayload(
   payload: Record<string, unknown>
 ): Record<string, unknown> {
@@ -166,6 +187,32 @@ export async function handleCreateBooking(
     return { ok: false, message: "Invalid party size." };
   }
 
+  const guestNameRaw =
+    typeof payload.guestName === "string" ? payload.guestName.trim() : "";
+  let resolvedFirst: string | undefined;
+  let resolvedLast: string | undefined;
+
+  if (guestNameRaw) {
+    const parsed = parseGuestNameFromString(guestNameRaw);
+    resolvedFirst = parsed.firstName || undefined;
+    resolvedLast = parsed.lastName;
+  } else {
+    const fn =
+      typeof payload.firstName === "string" ? payload.firstName.trim() : "";
+    const ln =
+      typeof payload.lastName === "string" ? payload.lastName.trim() : "";
+    resolvedFirst = fn || undefined;
+    resolvedLast = ln || undefined;
+  }
+
+  if (!resolvedFirst?.trim()) {
+    return {
+      ok: false,
+      message:
+        "Need at least the guest's first name to create a booking. Ask for their name (one word is enough), or pass guestName / firstName in the tool.",
+    };
+  }
+
   try {
     const row = await createBookingInDb({
       chatId,
@@ -176,12 +223,30 @@ export async function handleCreateBooking(
         typeof payload.seatingPreference === "string"
           ? payload.seatingPreference
           : undefined,
-      notes: typeof payload.notes === "string" ? payload.notes : undefined,
+      firstName: resolvedFirst,
+      lastName: resolvedLast,
+      dietaryRestrictions:
+        typeof payload.dietaryRestrictions === "string"
+          ? payload.dietaryRestrictions
+          : undefined,
+      guestNotes:
+        typeof payload.guestNotes === "string" ? payload.guestNotes : undefined,
+      reservationNotes:
+        typeof payload.reservationNotes === "string"
+          ? payload.reservationNotes
+          : undefined,
     });
 
+    const holdLine = formatHoldDeadlineLocal(row.status);
     return {
       ok: true,
-      message: `Reservation #${row.id} is saved for ${enriched.display}.`,
+      message: [
+        `Hold created: reservation #${row.id} for ${enriched.display}.`,
+        `Status is pending until the guest confirms. The table is held until ${holdLine} (restaurant local time).`,
+        "Summarize party size, date, time, and name back to the guest, then ask them to confirm the details are correct.",
+        "When they clearly agree (e.g. yes, confirm, that works), call confirmReservation with this reservation id.",
+        "Do not say the booking is fully confirmed until confirmReservation succeeds.",
+      ].join(" "),
       display: typeof enriched.display === "string" ? enriched.display : undefined,
       reservationId: row.id,
     };
@@ -277,6 +342,35 @@ export async function handleAddGuestNote(
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not save note.";
+    return { ok: false, message: msg };
+  }
+}
+
+export async function handleConfirmReservation(
+  payload: Record<string, unknown>
+): Promise<RestaurantHandlerResult> {
+  logRestaurantEndpoint("confirmReservation", payload);
+
+  const chatId = String(payload.chatId ?? "");
+  if (!chatId) {
+    return { ok: false, message: "Missing conversation id." };
+  }
+
+  try {
+    const row = await confirmReservationInDb({
+      chatId,
+      reservationIdRaw: payload.reservationId,
+    });
+    const display = `${row.date}, ${row.time}`;
+    return {
+      ok: true,
+      message: `Reservation #${row.id} is confirmed for ${display}.`,
+      display,
+      reservationId: row.id,
+    };
+  } catch (e) {
+    const msg =
+      e instanceof Error ? e.message : "Could not confirm reservation.";
     return { ok: false, message: msg };
   }
 }

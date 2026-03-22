@@ -204,6 +204,7 @@ export async function POST(request: Request) {
               : [
                   "getWeather",
                   "createBooking",
+                  "confirmReservation",
                   "updateReservation",
                   "addGuestNote",
                   "cancelReservation",

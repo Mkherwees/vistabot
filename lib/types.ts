@@ -26,6 +26,7 @@ type requestSuggestionsTool = InferUITool<
 export type ChatTools = {
   getWeather: weatherTool;
   createBooking: InferUITool<RestaurantTools["createBooking"]>;
+  confirmReservation: InferUITool<RestaurantTools["confirmReservation"]>;
   updateReservation: InferUITool<RestaurantTools["updateReservation"]>;
   addGuestNote: InferUITool<RestaurantTools["addGuestNote"]>;
   cancelReservation: InferUITool<RestaurantTools["cancelReservation"]>;
